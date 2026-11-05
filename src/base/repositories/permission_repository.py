@@ -1,99 +1,64 @@
-﻿from sqlalchemy.orm import Session, joinedload
+from typing import Any
 
-from src.base.models.permission import Permission, RolePermission, UserPermission
-from src.base.models.role import Role
-from src.base.models.user import User
+from base.repositories.base import BaseRepository
+
+_UPDATABLE = ("name", "module", "action", "description", "is_active")
 
 
-class PermissionRepository:
-    def __init__(self, db: Session) -> None:
-        self.db = db
+class PermissionRepository(BaseRepository):
+    async def get(self, permission_id: int) -> dict[str, Any] | None:
+        return await self._fetch_one("SELECT * FROM permissions WHERE id = %(id)s", {"id": permission_id})
 
-    def list_all(self, *, active_only: bool = True) -> list[Permission]:
-        query = self.db.query(Permission).order_by(Permission.module, Permission.code)
-        if active_only:
-            query = query.filter(Permission.is_active.is_(True))
-        return query.all()
+    async def get_by_code(self, code: str) -> dict[str, Any] | None:
+        return await self._fetch_one("SELECT * FROM permissions WHERE code = %(code)s", {"code": code})
 
-    def get_by_id(self, permission_id: int) -> Permission | None:
-        return self.db.get(Permission, permission_id)
+    async def existing_codes(self, codes: list[str]) -> set[str]:
+        rows = await self._fetch_all("SELECT code FROM permissions WHERE code = ANY(%(codes)s)", {"codes": codes})
+        return {row["code"] for row in rows}
 
-    def get_by_code(self, code: str) -> Permission | None:
-        return self.db.query(Permission).filter(Permission.code == code).first()
-
-    def get_role_with_permissions(self, role_id: int) -> Role | None:
-        return (
-            self.db.query(Role)
-            .options(joinedload(Role.permissions))
-            .filter(Role.id == role_id, Role.deleted_at.is_(None))
-            .first()
-        )
-
-    def get_user_with_overrides(self, user_id: int) -> User | None:
-        return (
-            self.db.query(User)
-            .options(
-                joinedload(User.role),
-                joinedload(User.permission_overrides).joinedload(UserPermission.permission),
-            )
-            .filter(User.id == user_id, User.deleted_at.is_(None))
-            .first()
-        )
-
-    def get_role_permission_codes(self, role_id: int) -> set[str]:
-        rows = (
-            self.db.query(Permission.code)
-            .join(RolePermission, RolePermission.permission_id == Permission.id)
-            .filter(
-                RolePermission.role_id == role_id,
-                Permission.is_active.is_(True),
-            )
-            .all()
-        )
-        return {row[0] for row in rows}
-
-    def get_user_override_codes(self, user_id: int) -> tuple[set[str], set[str]]:
-        rows = (
-            self.db.query(Permission.code, UserPermission.effect)
-            .join(UserPermission, UserPermission.permission_id == Permission.id)
-            .filter(
-                UserPermission.user_id == user_id,
-                Permission.is_active.is_(True),
-            )
-            .all()
-        )
-        grants = {code for code, effect in rows if effect == "grant"}
-        denies = {code for code, effect in rows if effect == "deny"}
-        return grants, denies
-
-    def replace_role_permissions(self, role: Role, permission_ids: list[int]) -> None:
-        role.permissions.clear()
-        if permission_ids:
-            permissions = (
-                self.db.query(Permission)
-                .filter(Permission.id.in_(permission_ids), Permission.is_active.is_(True))
-                .all()
-            )
-            role.permissions = permissions
-
-    def replace_user_overrides(
+    async def page(
         self,
-        user: User,
-        overrides: list[tuple[int, str, str | None]],
-    ) -> None:
-        self.db.query(UserPermission).filter(UserPermission.user_id == user.id).delete()
-        for permission_id, effect, note in overrides:
-            self.db.add(
-                UserPermission(
-                    user_id=user.id,
-                    permission_id=permission_id,
-                    effect=effect,
-                    note=note,
-                )
-            )
+        *,
+        limit: int,
+        offset: int,
+        module: str | None = None,
+        is_active: bool | None = None,
+        search: str | None = None,
+    ) -> tuple[list[dict[str, Any]], int]:
+        conditions = ["TRUE"]
+        params: dict[str, Any] = {}
+        if module is not None:
+            conditions.append("module = %(module)s")
+            params["module"] = module
+        if is_active is not None:
+            conditions.append("is_active = %(is_active)s")
+            params["is_active"] = is_active
+        if search:
+            conditions.append("(code ILIKE %(search)s OR name ILIKE %(search)s)")
+            params["search"] = f"%{search}%"
+        query = f"SELECT * FROM permissions WHERE {' AND '.join(conditions)} ORDER BY module, code"
+        return await self._fetch_page(query, params, limit=limit, offset=offset)
 
-    def commit(self) -> None:
-        self.db.commit()
+    async def list_all(self, *, active_only: bool = False) -> list[dict[str, Any]]:
+        where = "WHERE is_active" if active_only else ""
+        return await self._fetch_all(f"SELECT * FROM permissions {where} ORDER BY module, code")
 
-    def refresh(self, entity: object) -> None:
-        self.db.refresh(entity)
+    async def create(self, data: dict[str, Any]) -> dict[str, Any]:
+        row = await self._fetch_one(
+            """
+            INSERT INTO permissions (code, name, module, action, description, is_active)
+            VALUES (%(code)s, %(name)s, %(module)s, %(action)s, %(description)s, %(is_active)s)
+            RETURNING *
+            """,
+            data,
+        )
+        assert row is not None
+        return row
+
+    async def update(self, permission_id: int, fields: dict[str, Any]) -> dict[str, Any] | None:
+        return await self._update_returning(
+            "permissions", {"id": permission_id}, fields, allowed=_UPDATABLE, touch_updated_at=True
+        )
+
+    async def delete(self, permission_id: int) -> int:
+        return await self._execute("DELETE FROM permissions WHERE id = %(id)s", {"id": permission_id})

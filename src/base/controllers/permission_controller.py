@@ -1,85 +1,43 @@
-﻿from fastapi import HTTPException, status
-
-from src.base.controllers.deps import PermissionServiceDep
-from src.core.logging import Loggers, get_logger
-from src.base.requests.permission_request import UpdateRolePermissionsRequest, UpdateUserPermissionsRequest
-from src.base.responses.permission_response import (
-    MyPermissionsResponse,
-    PermissionResponse,
-    RolePermissionsResponse,
-    UserPermissionsResponse,
-)
-
-logger = get_logger(Loggers.API)
+from base.requests.pagination import PageParams
+from base.requests.permission_request import CreatePermissionRequest, UpdatePermissionRequest
+from base.responses.common import Page
+from base.responses.permission_response import PermissionGroupResponse, PermissionResponse
+from base.services.permission_service import PermissionService
 
 
 class PermissionController:
-    def get_my_permissions(self, current_user, permission_service: PermissionServiceDep) -> MyPermissionsResponse:
-        return MyPermissionsResponse.from_codes(permission_service.get_effective_codes(current_user))
-
-    def list_permissions(self, permission_service: PermissionServiceDep) -> list[PermissionResponse]:
-        return [PermissionResponse.from_model(p) for p in permission_service.list_permissions()]
-
-    def get_permission(self, permission_id: int, permission_service: PermissionServiceDep) -> PermissionResponse:
-        permission = permission_service.get_by_id(permission_id)
-        if permission is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Permission not found")
-        return PermissionResponse.from_model(permission)
-
-    def get_role_permissions(
+    async def page(
         self,
-        role_id: int,
-        permission_service: PermissionServiceDep,
-    ) -> RolePermissionsResponse:
-        role = permission_service.get_role_permissions(role_id)
-        if role is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role not found")
-        return RolePermissionsResponse.from_model(role)
+        params: PageParams,
+        module: str | None,
+        is_active: bool | None,
+        search: str | None,
+        service: PermissionService,
+    ) -> Page[PermissionResponse]:
+        rows, total = await service.page(
+            limit=params.limit, offset=params.offset, module=module, is_active=is_active, search=search
+        )
+        return Page.build([PermissionResponse.model_validate(row) for row in rows], total, params)
 
-    def update_role_permissions(
-        self,
-        role_id: int,
-        request: UpdateRolePermissionsRequest,
-        current_user,
-        permission_service: PermissionServiceDep,
-    ) -> RolePermissionsResponse:
-        role = permission_service.get_role_permissions(role_id)
-        if role is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role not found")
-        try:
-            role = permission_service.update_role_permissions(role, request)
-        except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-        logger.info("Role permissions updated by user id=%s role_id=%s", current_user.id, role_id)
-        return RolePermissionsResponse.from_model(role)
+    async def grouped(self, active_only: bool, service: PermissionService) -> list[PermissionGroupResponse]:
+        return [
+            PermissionGroupResponse(module=module, permissions=[PermissionResponse.model_validate(r) for r in rows])
+            for module, rows in await service.grouped(active_only=active_only)
+        ]
 
-    def get_user_permissions(
-        self,
-        user_id: int,
-        permission_service: PermissionServiceDep,
-    ) -> UserPermissionsResponse:
-        user = permission_service.get_user_overrides(user_id)
-        if user is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-        role_codes = permission_service.repo.get_role_permission_codes(user.role_id)
-        effective = permission_service.get_effective_codes(user)
-        return UserPermissionsResponse.build(user, role_codes, effective)
+    async def get(self, permission_id: int, service: PermissionService) -> PermissionResponse:
+        return PermissionResponse.model_validate(await service.get(permission_id))
 
-    def update_user_permissions(
-        self,
-        user_id: int,
-        request: UpdateUserPermissionsRequest,
-        current_user,
-        permission_service: PermissionServiceDep,
-    ) -> UserPermissionsResponse:
-        user = permission_service.get_user_overrides(user_id)
-        if user is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-        try:
-            user = permission_service.update_user_permissions(user, request)
-        except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-        logger.info("User permissions updated by user id=%s target_user_id=%s", current_user.id, user_id)
-        role_codes = permission_service.repo.get_role_permission_codes(user.role_id)
-        effective = permission_service.get_effective_codes(user)
-        return UserPermissionsResponse.build(user, role_codes, effective)
+    async def get_by_code(self, code: str, service: PermissionService) -> PermissionResponse:
+        return PermissionResponse.model_validate(await service.get_by_code(code))
+
+    async def create(self, request: CreatePermissionRequest, service: PermissionService) -> PermissionResponse:
+        return PermissionResponse.model_validate(await service.create(request))
+
+    async def update(
+        self, permission_id: int, request: UpdatePermissionRequest, service: PermissionService
+    ) -> PermissionResponse:
+        return PermissionResponse.model_validate(await service.update(permission_id, request))
+
+    async def delete(self, permission_id: int, service: PermissionService) -> None:
+        await service.delete(permission_id)

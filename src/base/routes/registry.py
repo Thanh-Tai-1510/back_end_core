@@ -1,45 +1,34 @@
-﻿from dataclasses import dataclass
+"""Single place where feature routers are plugged into the app.
+
+To add a feature: create base/routes/<feature>_route.py with `router = APIRouter(prefix=..., tags=[...])`,
+import it here and add it to API_ROUTERS (served under settings.API_PREFIX) or ROOT_ROUTERS (no prefix).
+"""
 
 from fastapi import APIRouter
 
-from src.base.routes import (
-    auth_route,
-    chat_route,
-    config_route,
-    menu_route,
-    permission_route,
-    role_route,
-    user_route,
+from base.routes import config_route, health_route, menu_route, permission_route
+
+# Served under settings.API_PREFIX (e.g. /api/v1/items).
+API_ROUTERS: tuple[APIRouter, ...] = (
+    config_route.router,
+    permission_route.router,
+    menu_route.router,
 )
 
-
-@dataclass(frozen=True)
-class RouteEntry:
-    router: APIRouter
-    name: str
-    description: str = ""
+# Served without prefix.
+ROOT_ROUTERS: tuple[APIRouter, ...] = (health_route.router,)
 
 
-V1_ROUTES: tuple[RouteEntry, ...] = (
-    RouteEntry(auth_route.router, "auth", "Đăng ký, đăng nhập, thông tin phiên"),
-    RouteEntry(user_route.router, "users", "Hồ sơ người dùng"),
-    RouteEntry(chat_route.router, "chat", "Chat AI qua n8n webhook"),
-    RouteEntry(config_route.router, "config", "Cấu hình hệ thống"),
-    RouteEntry(role_route.router, "roles", "Quản lý role"),
-    RouteEntry(menu_route.router, "menus", "Quản lý menu"),
-    RouteEntry(permission_route.router, "permissions", "Quản lý permission"),
-)
+def _combine(routers: tuple[APIRouter, ...]) -> APIRouter:
+    combined = APIRouter()
+    for router in routers:
+        combined.include_router(router)
+    return combined
 
 
-def build_v1_router() -> APIRouter:
-    api_router = APIRouter()
-    for entry in V1_ROUTES:
-        api_router.include_router(entry.router)
-    return api_router
+def build_api_router() -> APIRouter:
+    return _combine(API_ROUTERS)
 
 
-def list_v1_routes() -> list[dict[str, str]]:
-    return [
-        {"name": entry.name, "description": entry.description, "prefix": entry.router.prefix}
-        for entry in V1_ROUTES
-    ]
+def build_root_router() -> APIRouter:
+    return _combine(ROOT_ROUTERS)

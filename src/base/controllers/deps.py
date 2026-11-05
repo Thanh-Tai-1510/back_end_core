@@ -1,103 +1,85 @@
-﻿from typing import Annotated
+"""Shared FastAPI dependencies. Add a `get_<feature>_service` + `<Feature>ServiceDep` per feature."""
 
-from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy.orm import Session
+import hmac
+from typing import Annotated
 
-from src.core.database import get_db
-from src.core.logging import Loggers, get_logger
-from src.core.security import decode_access_token
-from src.base.models.user import User
-from src.base.repositories.user_repository import UserRepository
-from src.base.services.auth_service import AuthService
-from src.base.services.chat_service import ChatService
-from src.base.services.config_service import ConfigService
-from src.base.services.menu_service import MenuService
-from src.base.services.permission_service import PermissionService
-from src.base.services.role_service import RoleService
-from src.base.services.user_service import UserService
+import httpx
+from fastapi import Depends, Request, Security
+from fastapi.security import APIKeyHeader
+from psycopg import AsyncConnection
 
-bearer_scheme = HTTPBearer()
-logger = get_logger(Loggers.AUTH)
+from base.requests.pagination import PageParams
+from base.services.config_service import ConfigService
+from base.services.menu_service import MenuService
+from base.services.permission_service import PermissionService
+from core.config import settings
+from core.database import get_db
+from core.exceptions import ServiceUnavailableError, UnauthorizedError
+from core.logging import Loggers, get_logger
 
-DbSession = Annotated[Session, Depends(get_db)]
+logger = get_logger(Loggers.SECURITY)
+
+DbConn = Annotated[AsyncConnection, Depends(get_db)]
 
 
-def get_config_service(db: DbSession) -> ConfigService:
+def get_http_client(request: Request) -> httpx.AsyncClient:
+    """App-wide client (connection pooling); created and closed in the app lifespan."""
+    return request.app.state.http_client
+
+
+HttpClient = Annotated[httpx.AsyncClient, Depends(get_http_client)]
+
+
+def get_request_id(request: Request) -> str:
+    return getattr(request.state, "request_id", "")
+
+
+RequestId = Annotated[str, Depends(get_request_id)]
+
+PageParamsDep = Annotated[PageParams, Depends()]
+
+
+# --- Admin guard -------------------------------------------------------------------------
+# Protects admin endpoints with a shared key until the project adds real auth; then swap
+# require_admin for a permission check on the current user.
+
+_api_key_header = APIKeyHeader(
+    name="X-API-Key",
+    auto_error=False,
+    description="Value of ADMIN_API_KEY",
+)
+
+
+async def require_admin(request: Request, api_key: Annotated[str | None, Security(_api_key_header)]) -> None:
+    expected = settings.ADMIN_API_KEY
+    if not expected:
+        if settings.is_production:
+            raise ServiceUnavailableError("ADMIN_API_KEY is not configured")
+        return  # Development without a key: open, for convenience.
+    if not api_key or not hmac.compare_digest(api_key.encode("utf-8"), expected.encode("utf-8")):
+        client = request.client.host if request.client else "unknown"
+        logger.warning("Admin key rejected: %s %s from %s", request.method, request.url.path, client)
+        raise UnauthorizedError("Invalid or missing X-API-Key")
+
+
+AdminGuard = Depends(require_admin)
+
+
+# --- Services ----------------------------------------------------------------------------
+
+
+def get_config_service(db: DbConn) -> ConfigService:
     return ConfigService(db)
 
 
-def get_user_service(db: DbSession) -> UserService:
-    return UserService(db)
-
-
-def get_auth_service(db: DbSession, config: ConfigService = Depends(get_config_service)) -> AuthService:
-    return AuthService(db, config)
-
-
-def get_role_service(db: DbSession) -> RoleService:
-    return RoleService(db)
-
-
-def get_menu_service(db: DbSession) -> MenuService:
-    return MenuService(db)
-
-
-def get_permission_service(db: DbSession) -> PermissionService:
+def get_permission_service(db: DbConn) -> PermissionService:
     return PermissionService(db)
 
 
-def get_chat_service(config: ConfigService = Depends(get_config_service)) -> ChatService:
-    return ChatService(config)
+def get_menu_service(db: DbConn) -> MenuService:
+    return MenuService(db)
 
 
-ConfigDep = Annotated[ConfigService, Depends(get_config_service)]
-UserServiceDep = Annotated[UserService, Depends(get_user_service)]
-AuthServiceDep = Annotated[AuthService, Depends(get_auth_service)]
-RoleServiceDep = Annotated[RoleService, Depends(get_role_service)]
-MenuServiceDep = Annotated[MenuService, Depends(get_menu_service)]
+ConfigServiceDep = Annotated[ConfigService, Depends(get_config_service)]
 PermissionServiceDep = Annotated[PermissionService, Depends(get_permission_service)]
-ChatServiceDep = Annotated[ChatService, Depends(get_chat_service)]
-
-
-def get_current_user(
-    db: DbSession,
-    config: ConfigDep,
-    credentials: Annotated[HTTPAuthorizationCredentials, Depends(bearer_scheme)],
-) -> User:
-    payload = decode_access_token(
-        credentials.credentials,
-        secret_key=config.get_jwt_secret_key(),
-        algorithm=config.get_jwt_algorithm(),
-    )
-    if payload is None or payload.get("sub") is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token không hợp lệ",
-        )
-
-    user = UserRepository(db).get_by_id(int(payload["sub"]))
-    if user is None or user.is_deleted or not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token không hợp lệ",
-        )
-    return user
-
-
-def require_permission(permission_code: str):
-    def dependency(
-        current_user: Annotated[User, Depends(get_current_user)],
-        permission_service: PermissionServiceDep,
-    ) -> User:
-        if not permission_service.has_permission(current_user, permission_code):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Không có quyền thực hiện thao tác này",
-            )
-        return current_user
-
-    return Depends(dependency)
-
-
-CurrentUser = Annotated[User, Depends(get_current_user)]
+MenuServiceDep = Annotated[MenuService, Depends(get_menu_service)]

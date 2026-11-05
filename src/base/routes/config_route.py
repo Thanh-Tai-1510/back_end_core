@@ -1,68 +1,55 @@
-﻿from typing import Annotated
+from typing import Annotated
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Path, Query, status
 
-from src.base.controllers.deps import ConfigDep, DbSession, require_permission
-from src.base.controllers.config_controller import ConfigController
-from src.core.permissions import PermissionCode
-from src.base.models.user import User
-from src.base.requests.config_request import CreateConfigRequest, UpdateConfigRequest
-from src.base.responses.config_response import ConfigResponse
+from base.controllers.config_controller import ConfigController
+from base.controllers.deps import AdminGuard, ConfigServiceDep, PageParamsDep
+from base.requests.config_request import CONFIG_KEY_PATTERN, CreateConfigRequest, UpdateConfigRequest
+from base.responses.common import MessageResponse, Page
+from base.responses.config_response import ConfigResponse
 
-router = APIRouter(prefix="/config", tags=["config"])
+# All config endpoints are admin-only: the values drive app behaviour.
+router = APIRouter(prefix="/config", tags=["config"], dependencies=[AdminGuard])
 controller = ConfigController()
 
-
-@router.get("", response_model=list[ConfigResponse])
-def list_configs(
-    db: DbSession,
-    current_user: Annotated[User, require_permission(PermissionCode.CONFIG_LIST)],
-    reveal_sensitive: bool = False,
-) -> list[ConfigResponse]:
-    return controller.list_configs(db, current_user, reveal_sensitive)
+ConfigKey = Annotated[str, Path(pattern=CONFIG_KEY_PATTERN)]
 
 
-@router.post("/cache/refresh", status_code=status.HTTP_204_NO_CONTENT)
-def refresh_config_cache(
-    config: ConfigDep,
-    current_user: Annotated[User, require_permission(PermissionCode.CONFIG_CACHE_REFRESH)],
-) -> None:
-    controller.refresh_config_cache(config, current_user)
+@router.get("", response_model=Page[ConfigResponse])
+async def list_config(
+    params: PageParamsDep,
+    service: ConfigServiceDep,
+    type: Annotated[str | None, Query(description="Filter by group")] = None,
+    q: Annotated[str | None, Query(max_length=100, description="Search in key")] = None,
+) -> Page[ConfigResponse]:
+    return await controller.page(params, type, q, service)
+
+
+@router.get("/types", response_model=list[str])
+async def list_config_types(service: ConfigServiceDep) -> list[str]:
+    return await controller.types(service)
+
+
+@router.post("/cache/refresh", response_model=MessageResponse)
+async def refresh_config_cache(service: ConfigServiceDep) -> MessageResponse:
+    return await controller.refresh_cache(service)
 
 
 @router.get("/{key}", response_model=ConfigResponse)
-def get_config(
-    key: str,
-    db: DbSession,
-    current_user: Annotated[User, require_permission(PermissionCode.CONFIG_READ)],
-    reveal_sensitive: bool = False,
-) -> ConfigResponse:
-    return controller.get_config(key, db, current_user, reveal_sensitive)
+async def get_config(key: ConfigKey, service: ConfigServiceDep) -> ConfigResponse:
+    return await controller.get(key, service)
 
 
 @router.post("", response_model=ConfigResponse, status_code=status.HTTP_201_CREATED)
-def create_config(
-    request: CreateConfigRequest,
-    db: DbSession,
-    current_user: Annotated[User, require_permission(PermissionCode.CONFIG_CREATE)],
-) -> ConfigResponse:
-    return controller.create_config(request, db, current_user)
+async def create_config(request: CreateConfigRequest, service: ConfigServiceDep) -> ConfigResponse:
+    return await controller.create(request, service)
 
 
-@router.put("/{key}", response_model=ConfigResponse)
-def update_config(
-    key: str,
-    request: UpdateConfigRequest,
-    db: DbSession,
-    current_user: Annotated[User, require_permission(PermissionCode.CONFIG_UPDATE)],
-) -> ConfigResponse:
-    return controller.update_config(key, request, db, current_user)
+@router.patch("/{key}", response_model=ConfigResponse)
+async def update_config(key: ConfigKey, request: UpdateConfigRequest, service: ConfigServiceDep) -> ConfigResponse:
+    return await controller.update(key, request, service)
 
 
 @router.delete("/{key}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_config(
-    key: str,
-    db: DbSession,
-    current_user: Annotated[User, require_permission(PermissionCode.CONFIG_DELETE)],
-) -> None:
-    controller.delete_config(key, db, current_user)
+async def delete_config(key: ConfigKey, service: ConfigServiceDep) -> None:
+    await controller.delete(key, service)

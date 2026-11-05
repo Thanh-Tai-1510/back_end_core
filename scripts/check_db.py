@@ -1,29 +1,14 @@
-import sys
-from pathlib import Path
+"""Check the database connection and list tables in PG_SCHEMA.  Usage: python scripts/check_db.py"""
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from _db import connect, settings
 
-from sqlalchemy import text
-
-from src.core.database import engine
-
-with engine.connect() as conn:
+with connect(autocommit=True) as conn:
+    version = conn.execute("SELECT version() AS v").fetchone()["v"]
+    print("Connected:", f"{settings.PG_HOST}:{settings.PG_PORT}/{settings.PG_DATABASE}")
+    print("Server:", version)
+    print("search_path:", conn.execute("SHOW search_path").fetchone()["search_path"])
     rows = conn.execute(
-        text(
-            """
-            SELECT table_schema, table_name
-            FROM information_schema.tables
-            WHERE table_schema IN ('public', 'web_app')
-              AND table_name IN ('users', 'config')
-            ORDER BY 1, 2
-            """
-        )
+        "SELECT table_name FROM information_schema.tables WHERE table_schema = %s ORDER BY 1",
+        [settings.PG_SCHEMA],
     ).fetchall()
-    print("Tables:", rows)
-    print("search_path:", conn.execute(text("SHOW search_path")).scalar())
-    for schema in ("public", "web_app"):
-        try:
-            count = conn.execute(text(f'SELECT COUNT(*) FROM "{schema}"."users"')).scalar()
-            print(f"{schema}.users count:", count)
-        except Exception as exc:
-            print(f"{schema}.users:", exc)
+    print(f"Tables in {settings.PG_SCHEMA}:", [r["table_name"] for r in rows] or "(none)")

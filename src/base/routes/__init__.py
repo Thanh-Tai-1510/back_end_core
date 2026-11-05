@@ -1,3 +1,3 @@
-﻿from src.base.routes.registry import V1_ROUTES, build_v1_router, list_v1_routes
+from base.routes.registry import build_api_router, build_root_router
 
-__all__ = ["V1_ROUTES", "build_v1_router", "list_v1_routes"]
+__all__ = ["build_api_router", "build_root_router"]

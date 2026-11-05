@@ -1,41 +1,12 @@
-from src.base.controllers.deps import (
-    AuthServiceDep,
-    ConfigDep,
-    CurrentUser,
-    DbSession,
-    MenuServiceDep,
-    PermissionServiceDep,
-    RoleServiceDep,
-    UserServiceDep,
-    require_permission,
-)
-from src.base.routes.registry import V1_ROUTES, build_v1_router, list_v1_routes
-from src.base.services import (
-    AuthService,
-    ConfigService,
-    MenuService,
-    PermissionService,
-    RoleService,
-    UserService,
-)
+"""Application layers. A feature is split across them:
 
-__all__ = [
-    "AuthService",
-    "AuthServiceDep",
-    "ConfigDep",
-    "ConfigService",
-    "CurrentUser",
-    "DbSession",
-    "MenuService",
-    "MenuServiceDep",
-    "PermissionService",
-    "PermissionServiceDep",
-    "RoleService",
-    "RoleServiceDep",
-    "UserService",
-    "UserServiceDep",
-    "V1_ROUTES",
-    "build_v1_router",
-    "list_v1_routes",
-    "require_permission",
-]
+    routes/       APIRouter + endpoint signatures (HTTP only)
+    controllers/  request -> service call -> response mapping; deps.py holds FastAPI dependencies
+    services/     business rules, transactions
+    repositories/ SQL (psycopg 3, dict rows)
+    models/       internal data classes (rows from the DB)
+    requests/     Pydantic input schemas
+    responses/    Pydantic output schemas
+
+See README.md, "Adding a feature".
+"""

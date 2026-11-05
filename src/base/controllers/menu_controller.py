@@ -1,62 +1,26 @@
-﻿from fastapi import HTTPException, status
-
-from src.base.controllers.deps import MenuServiceDep
-from src.core.logging import Loggers, get_logger
-from src.base.requests.menu_request import CreateMenuRequest, UpdateMenuRequest
-from src.base.responses.menu_response import MenuResponse, MenuTreeResponse
-
-logger = get_logger(Loggers.API)
+from base.requests.menu_request import CreateMenuRequest, ReorderMenusRequest, UpdateMenuRequest
+from base.responses.menu_response import MenuResponse, MenuTreeResponse
+from base.services.menu_service import MenuService
 
 
 class MenuController:
-    def get_my_menu_tree(self, current_user, menu_service: MenuServiceDep) -> list[MenuTreeResponse]:
-        return menu_service.list_tree_for_user(current_user)
+    async def list_menus(self, active_only: bool, service: MenuService) -> list[MenuResponse]:
+        return [MenuResponse.model_validate(row) for row in await service.list_menus(active_only=active_only)]
 
-    def list_menus(self, menu_service: MenuServiceDep) -> list[MenuResponse]:
-        return [MenuResponse.from_model(menu) for menu in menu_service.list_all()]
+    async def tree(self, active_only: bool, service: MenuService) -> list[MenuTreeResponse]:
+        return [MenuTreeResponse.model_validate(node) for node in await service.tree(active_only=active_only)]
 
-    def list_menu_tree(self, menu_service: MenuServiceDep) -> list[MenuTreeResponse]:
-        return menu_service.list_tree()
+    async def get(self, menu_id: int, service: MenuService) -> MenuResponse:
+        return MenuResponse.model_validate(await service.get(menu_id))
 
-    def get_menu(self, menu_id: int, menu_service: MenuServiceDep) -> MenuResponse:
-        menu = menu_service.get_by_id(menu_id)
-        if menu is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Menu not found")
-        return MenuResponse.from_model(menu)
+    async def create(self, request: CreateMenuRequest, service: MenuService) -> MenuResponse:
+        return MenuResponse.model_validate(await service.create(request))
 
-    def create_menu(
-        self,
-        request: CreateMenuRequest,
-        current_user,
-        menu_service: MenuServiceDep,
-    ) -> MenuResponse:
-        try:
-            menu = menu_service.create(request)
-        except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-        logger.info("Menu created by user id=%s code=%s", current_user.id, request.code)
-        return MenuResponse.from_model(menu)
+    async def update(self, menu_id: int, request: UpdateMenuRequest, service: MenuService) -> MenuResponse:
+        return MenuResponse.model_validate(await service.update(menu_id, request))
 
-    def update_menu(
-        self,
-        menu_id: int,
-        request: UpdateMenuRequest,
-        current_user,
-        menu_service: MenuServiceDep,
-    ) -> MenuResponse:
-        menu = menu_service.get_by_id(menu_id)
-        if menu is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Menu not found")
-        try:
-            menu = menu_service.update(menu, request)
-        except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-        logger.info("Menu updated by user id=%s menu_id=%s", current_user.id, menu_id)
-        return MenuResponse.from_model(menu)
+    async def reorder(self, request: ReorderMenusRequest, service: MenuService) -> list[MenuResponse]:
+        return [MenuResponse.model_validate(row) for row in await service.reorder(request)]
 
-    def delete_menu(self, menu_id: int, current_user, menu_service: MenuServiceDep) -> None:
-        menu = menu_service.get_by_id(menu_id)
-        if menu is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Menu not found")
-        menu_service.soft_delete(menu)
-        logger.info("Menu deleted by user id=%s menu_id=%s", current_user.id, menu_id)
+    async def delete(self, menu_id: int, cascade: bool, service: MenuService) -> None:
+        await service.delete(menu_id, cascade=cascade)

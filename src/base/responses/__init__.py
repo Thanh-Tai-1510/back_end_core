@@ -1,16 +1,16 @@
-﻿from src.base.responses.auth_response import TokenResponse
-from src.base.responses.config_response import ConfigResponse
-from src.base.responses.menu_response import MenuResponse, MenuTreeResponse
-from src.base.responses.role_response import RoleBriefResponse, RoleResponse
-from src.base.responses.user_response import UserPublicResponse, UserResponse
+from base.responses.common import ErrorDetail, ErrorResponse, MessageResponse, Page
+from base.responses.config_response import ConfigResponse
+from base.responses.menu_response import MenuResponse, MenuTreeResponse
+from base.responses.permission_response import PermissionGroupResponse, PermissionResponse
 
 __all__ = [
     "ConfigResponse",
+    "ErrorDetail",
+    "ErrorResponse",
     "MenuResponse",
     "MenuTreeResponse",
-    "RoleBriefResponse",
-    "RoleResponse",
-    "TokenResponse",
-    "UserPublicResponse",
-    "UserResponse",
+    "MessageResponse",
+    "Page",
+    "PermissionGroupResponse",
+    "PermissionResponse",
 ]
